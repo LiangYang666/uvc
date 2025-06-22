@@ -261,6 +261,7 @@ uvc_env_list() {
 }
 
 uvc_create() {
+
     IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
     for t_path in ${paths}; do
         ENV_PATH="$t_path/$1"
@@ -270,7 +271,17 @@ uvc_create() {
         fi
     done
 
-    ENV_PATH="${paths[0]}/$1"
+    if [ -n "$ZSH_VERSION" ]; then
+        # zsh
+        search_roots=(${(s.:.)UVC_ENV_SEARCH_ROOTS})
+        first_root="${search_roots[1]}"
+    else
+        # bash
+        IFS=":" read -ra search_roots <<< "$UVC_ENV_SEARCH_ROOTS"
+        first_root="${search_roots[0]}"
+    fi
+
+    ENV_PATH="$first_root/$1"
 
     if [ ! -z "$2" ]; then
         (uv init "$ENV_PATH" --python "$2" && cd "$ENV_PATH" && uv venv --python "$2")
