@@ -1,4 +1,4 @@
-# ~/.uvc/uvc.sh
+#!/bin/bash
 
 # Environment search directories, can contain multiple environments, default first line is $HOME/.uvc/envs
 UVC_ENV_SEARCH_ROOTS_CONFIG="$HOME/.uvc/env-search-roots"
@@ -84,11 +84,11 @@ uvc_unlink_an_env() {
 uvc_remove_env() {
     ENV_NAME=$1
     IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-    for path in ${paths}; do
-        ENV_PATH="$path/$ENV_NAME"
+    for t_path in ${paths}; do
+        ENV_PATH="$t_path/$ENV_NAME"
         if [ -d "$ENV_PATH" ]; then
             rm -rf "$ENV_PATH"
-            echo "Removed environment $ENV_NAME in $path"
+            echo "Removed environment $ENV_NAME in $t_path"
             return
         fi
     done
@@ -102,29 +102,24 @@ uvc_activate() {
 
     # Internal function to activate environment
     _do_activate() {
-        local env_path="$1"
-        local env_name="$2"
+        local t_env_path="$1"
+        local t_env_name="$2"
 
-        if [ -f "$env_path/bin/activate" ]; then
+        if [ -f "$t_env_path/bin/activate" ]; then
             # Environment with activate script
-            source "$env_path/bin/activate"
-        elif [ -f "$env_path/.venv/bin/activate" ]; then
+            source "$t_env_path/bin/activate"
+        elif [ -f "$t_env_path/.venv/bin/activate" ]; then
             # Environment with activate script
-            source "$env_path/.venv/bin/activate"
+            source "$t_env_path/.venv/bin/activate"
         else
-            export VIRTUAL_ENV="$env_path"
-            export PATH="$VIRTUAL_ENV/bin:$PATH"
-            export PS1="($env_name) $PS1"
-
             export _OLD_VIRTUAL_PATH="$PATH"
             export _OLD_PS1="$PS1"
             export _OLD_VIRTUAL_ENV="$VIRTUAL_ENV"
-            export VIRTUAL_ENV="$env_path"
+            export VIRTUAL_ENV="$t_env_path"
             export PATH="$VIRTUAL_ENV/bin:$PATH"
-            export PS1="($env_name) $PS1"
-
+            export PS1="($t_env_name) $PS1"
         fi
-        echo "Activated environment: $env_name"
+        echo "Activated environment: $t_env_name"
         return 0
     }
 
@@ -132,13 +127,13 @@ uvc_activate() {
     IFS=":" read -r linked_paths <<< $(echo $UVC_LINKED_ENV_PATHS)
     for linked_path in ${linked_paths}; do
         if [ -d "$linked_path" ]; then
-            env_name=$(basename "$linked_path")
+            t_env_name=$(basename "$linked_path")
             # If folder name is .venv, use parent directory name
-            if [ "$env_name" = ".venv" ]; then
-                env_name=$(basename "$(dirname "$linked_path")")
+            if [ "$t_env_name" = ".venv" ]; then
+                t_env_name=$(basename "$(dirname "$linked_path")")
             fi
 
-            if [ "$env_name" = "$1" ]; then
+            if [ "$t_env_name" = "$1" ]; then
                 ENV_PATH="$linked_path"
                 if [ -d "$ENV_PATH" ]; then
                     _do_activate "$ENV_PATH" "$1"
@@ -150,8 +145,8 @@ uvc_activate() {
 
     # Check search root directories
     IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-    for path in ${paths}; do
-        ENV_PATH="$path/$1"
+    for t_path in ${paths}; do
+        ENV_PATH="$t_path/$1"
         if [ -d "$ENV_PATH" ]; then
             _do_activate "$ENV_PATH" "$1"
             return
@@ -168,10 +163,6 @@ uvc_deactivate() {
             deactivate
             return
         else
-            PATH=${PATH#"$VIRTUAL_ENV"}
-            unset VIRTUAL_ENV
-            PS1="${PS1#(*\) }"
-
             export PATH="$_OLD_VIRTUAL_PATH"
             export PS1="$_OLD_PS1"
             export VIRTUAL_ENV="$_OLD_VIRTUAL_ENV"
@@ -189,21 +180,30 @@ uvc_env_list() {
     echo "# Custom Python environments:"
     echo "#"
 
-    # Collect all environments (both from search roots and linked)
-    declare -A all_envs
+    # Create a temporary file to store environments
+    temp_file="${TMPDIR:-/tmp}/uvc_envs_$$"
     max_len=0
 
     # Add environments from search roots
     if [ -n "$UVC_ENV_SEARCH_ROOTS" ]; then
-        IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-        for path in ${paths}; do
-            if [ -d "$path" ]; then
-                for env in $(ls "$path"); do
-                    if [ -d "$path/$env" ]; then
-                        ENV_NAME=$(basename "$env")
-                        all_envs["$ENV_NAME"]="$path/$env"
-                        len=${#ENV_NAME}
-                        ((len > max_len)) && max_len=$len
+        OLD_IFS="$IFS"
+        IFS=":"
+        set -- $UVC_ENV_SEARCH_ROOTS
+        IFS="$OLD_IFS"
+
+        for t_path in "$@"; do
+            [ -z "$t_path" ] && continue
+            if [ -d "$t_path" ]; then
+                for env_dir in "$t_path"/*; do
+                    if [ -d "$env_dir" ]; then
+                        ENV_NAME=$(basename "$env_dir")
+                        echo "$ENV_NAME|$env_dir" >> "$temp_file"
+                        # Calculate string length
+                        env_name_len=$(echo "$ENV_NAME" | wc -c)
+                        env_name_len=$((env_name_len - 1))
+                        if [ $env_name_len -gt $max_len ]; then
+                            max_len=$env_name_len
+                        fi
                     fi
                 done
             fi
@@ -212,40 +212,60 @@ uvc_env_list() {
 
     # Add linked environments
     if [ -n "$UVC_LINKED_ENV_PATHS" ]; then
-        IFS=":" read -r linked_paths <<< $(echo $UVC_LINKED_ENV_PATHS)
-        for linked_path in ${linked_paths}; do
+        OLD_IFS="$IFS"
+        IFS=":"
+        set -- $UVC_LINKED_ENV_PATHS
+        IFS="$OLD_IFS"
+
+        for linked_path in "$@"; do
+            [ -z "$linked_path" ] && continue
             if [ -d "$linked_path" ]; then
-                env_name=$(basename "$linked_path")
+                t_env_name=$(basename "$linked_path")
                 # If folder name is .venv, use parent directory name
-                if [ "$env_name" = ".venv" ]; then
-                    env_name=$(basename "$(dirname "$linked_path")")
+                if [ "$t_env_name" = ".venv" ]; then
+                    t_env_name=$(basename "$(dirname "$linked_path")")
                 fi
-                all_envs["$env_name"]="$(realpath "$linked_path") (linked)"
-                len=${#env_name}
-                ((len > max_len)) && max_len=$len
+                echo "$t_env_name|$linked_path (linked)" >> "$temp_file"
+                env_name_len=$(echo "$t_env_name" | wc -c)
+                env_name_len=$((env_name_len - 1))
+                if [ $env_name_len -gt $max_len ]; then
+                    max_len=$env_name_len
+                fi
             fi
         done
     fi
 
-    # Display all environments
-    for key in "${!all_envs[@]}"; do
-        value="${all_envs[$key]}"
-        actual_value="${value% (linked)}"
-        
-        if [ ! -z "$VIRTUAL_ENV" ] && [[ "$VIRTUAL_ENV" == "$actual_value" ]]; then
-            printf "%-${max_len}s *  %s\n" "$key" "$value"
-        else
-            printf "%-${max_len}s    %s\n" "$key" "$value"
-        fi
-    done | sort
+    # Display all environments if temp file exists and has content
+    if [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+        while IFS='|' read -r t_env_name t_env_path; do
+            # Remove " (linked)" suffix for comparison
+            case "$t_env_path" in
+                *" (linked)")
+                    actual_path="${t_env_path% (linked)}"
+                    ;;
+                *)
+                    actual_path="$t_env_path"
+                    ;;
+            esac
+
+            # Check if this environment is currently active
+            if [ -n "$VIRTUAL_ENV" ] && [ "$VIRTUAL_ENV" = "$actual_path" ]; then
+                printf "%-${max_len}s *  %s\n" "$t_env_name" "$t_env_path"
+            else
+                printf "%-${max_len}s    %s\n" "$t_env_name" "$t_env_path"
+            fi
+        done < "$temp_file" | /usr/bin/sort
+    fi
+    # Clean up
+    rm -f "$temp_file"
 }
 
 uvc_create() {
     IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-    for path in ${paths}; do
-        ENV_PATH="$path/$1"
+    for t_path in ${paths}; do
+        ENV_PATH="$t_path/$1"
         if [ -d "$ENV_PATH" ]; then
-            echo "Environment $1 already exists in $path."
+            echo "Environment $1 already exists in $t_path."
             return
         fi
     done
@@ -263,7 +283,7 @@ uvc_create() {
 uvc_uv() {
     if [ -z "$VIRTUAL_ENV" ]; then
         echo "No virtual environment is currently activated."
-        echo "Please activate an environment first using: uvc activate <env_name>"
+        echo "Please activate an environment first using: uvc activate <t_env_name>"
         return 1
     fi
 
@@ -280,7 +300,7 @@ uvc() {
     case "$COMMAND" in
         activate)
             if [ -z "$1" ]; then
-                echo "Usage: uvc activate <env_name>"
+                echo "Usage: uvc activate <t_env_name>"
             else
                 uvc_activate $1
             fi
@@ -302,14 +322,14 @@ uvc() {
                     if [ $# -eq 1 ]; then
                         uvc_link_an_env "$1"
                     else
-                        echo "Usage: uvc env link <env_path>"
+                        echo "Usage: uvc env link <t_env_path>"
                     fi
                     ;;
                 unlink)
                     if [ $# -eq 1 ]; then
                         uvc_unlink_an_env "$1"
                     else
-                        echo "Usage: uvc env unlink <env_path>"
+                        echo "Usage: uvc env unlink <t_env_path>"
                     fi
                     ;;
                 *)
@@ -335,12 +355,12 @@ uvc() {
                         ;;
                     *)
                         echo "Unknown option: $1"
-                        echo "Usage: uvc create -n <env_name> [python=<version>]"
+                        echo "Usage: uvc create -n <t_env_name> [python=<version>]"
                         ;;
                 esac
             done
             if [ -z "$ENV_NAME" ]; then
-                echo "Usage: uvc create -n <env_name> [python=<version>]"
+                echo "Usage: uvc create -n <t_env_name> [python=<version>]"
             else
                 uvc_create $ENV_NAME $PYTHON_VERSION
             fi
@@ -356,13 +376,13 @@ uvc() {
                         ;;
                     *)
                         echo "Unknown option: $1"
-                        echo "Usage: uvc remove -n <env_name>"
+                        echo "Usage: uvc remove -n <t_env_name>"
                         ;;
                 esac
             done
 
             if [ -z "$ENV_NAME" ]; then
-                echo "Usage: uvc remove <env_name>"
+                echo "Usage: uvc remove <t_env_name>"
             else
                 uvc_remove_env $ENV_NAME
             fi
@@ -406,15 +426,15 @@ uvc() {
             echo "Unknown command: $COMMAND"
             echo "Usage: uvc <command> [<args>]"
             echo "Commands:"
-            echo "  activate <env_name>  Activate the specified environment"
+            echo "  activate <t_env_name>  Activate the specified environment"
             echo "  deactivate           Deactivate the current environment"
             echo "  uv <uv_command>      Execute uv commands in the current virtual environment"
             echo "  env list             List all available environments"
-            echo "  env link <env_path>   Link an environment to the linked environments"
-            echo "  env unlink <env_path>  Unlink an environment from the linked environments"
-            echo "  remove -n <env_name>  Remove the specified environment"
-            echo "  create -n <env_name>  Create a new environment using default Python version"
-            echo "  create -n <env_name> python=3.x   Create a new environment using Python 3.x"
+            echo "  env link <t_env_path>   Link an environment to the linked environments"
+            echo "  env unlink <t_env_path>  Unlink an environment from the linked environments"
+            echo "  remove -n <t_env_name>  Remove the specified environment"
+            echo "  create -n <t_env_name>  Create a new environment using default Python version"
+            echo "  create -n <t_env_name> python=3.x   Create a new environment using Python 3.x"
             echo "  config --add env-search-roots <dir>      Add a directory to env-search-roots in the config"
             echo "  config --remove env-search-roots <dir>   Remove a directory from env-search-roots in the config"
             echo "  config --show env-search-roots           Show the current env-search-roots in the config"
