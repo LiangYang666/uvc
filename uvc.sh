@@ -43,7 +43,11 @@ uvc_add_env_search_root() {
 uvc_remove_env_search_root() {
     DIR=$1
     if grep -qxF "$DIR" "$UVC_ENV_SEARCH_ROOTS_CONFIG"; then
-        sed -i '' "\|^$DIR\$|d" "$UVC_ENV_SEARCH_ROOTS_CONFIG"
+        if sed --version >/dev/null 2>&1; then
+            sed -i "\|^$DIR\$|d" "$UVC_ENV_SEARCH_ROOTS_CONFIG"
+        else
+            sed -i '' "\|^$DIR\$|d" "$UVC_ENV_SEARCH_ROOTS_CONFIG"
+        fi
         uvc_load_config
         echo "Removed $DIR from env-search-roots and updated UVC_ENV_SEARCH_ROOTS."
     else
@@ -73,7 +77,11 @@ uvc_link_an_env() {
 uvc_unlink_an_env() {
     ENV_PATH=$1
     if grep -qxF "$ENV_PATH" "$UVC_LINKED_ENV_PATHS_CONFIG"; then
-        sed -i '' "\|^$ENV_PATH\$|d" "$UVC_LINKED_ENV_PATHS_CONFIG"
+        if sed --version >/dev/null 2>&1; then
+            sed -i "\|^$ENV_PATH\$|d" "$UVC_LINKED_ENV_PATHS_CONFIG"
+        else
+            sed -i '' "\|^$ENV_PATH\$|d" "$UVC_LINKED_ENV_PATHS_CONFIG"
+        fi
         uvc_load_config
         echo "Removed $ENV_PATH from linked-env-paths and updated UVC_LINKED_ENV_PATHS."
     else
@@ -83,15 +91,17 @@ uvc_unlink_an_env() {
 
 uvc_remove_env() {
     ENV_NAME=$1
-    IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-    for t_path in ${paths}; do
+    OLD_IFS="$IFS"; IFS=":"
+    for t_path in $UVC_ENV_SEARCH_ROOTS; do
         ENV_PATH="$t_path/$ENV_NAME"
         if [ -d "$ENV_PATH" ]; then
             rm -rf "$ENV_PATH"
             echo "Removed environment $ENV_NAME in $t_path"
+            IFS="$OLD_IFS"
             return
         fi
     done
+    IFS="$OLD_IFS"
     echo "Environment $ENV_NAME does not exist."
 }
 
@@ -116,7 +126,10 @@ uvc_activate() {
             export _OLD_PS1="$PS1"
             export _OLD_VIRTUAL_ENV="$VIRTUAL_ENV"
             export VIRTUAL_ENV="$t_env_path"
-            export PATH="$VIRTUAL_ENV/bin:$PATH"
+            case ":$PATH:" in
+                *":$VIRTUAL_ENV/bin:"*) ;;
+                *) export PATH="$VIRTUAL_ENV/bin:$PATH" ;;
+            esac
             export PS1="($t_env_name) $PS1"
         fi
         echo "Activated environment: $t_env_name"
@@ -124,8 +137,8 @@ uvc_activate() {
     }
 
     # Check linked environments first
-    IFS=":" read -r linked_paths <<< $(echo $UVC_LINKED_ENV_PATHS)
-    for linked_path in ${linked_paths}; do
+    OLD_IFS="$IFS"; IFS=":"
+    for linked_path in $UVC_LINKED_ENV_PATHS; do
         if [ -d "$linked_path" ]; then
             t_env_name=$(basename "$linked_path")
             # If folder name is .venv, use parent directory name
@@ -137,21 +150,25 @@ uvc_activate() {
                 ENV_PATH="$linked_path"
                 if [ -d "$ENV_PATH" ]; then
                     _do_activate "$ENV_PATH" "$1"
+                    IFS="$OLD_IFS"
                     return
                 fi
             fi
         fi
     done
+    IFS="$OLD_IFS"
 
     # Check search root directories
-    IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-    for t_path in ${paths}; do
+    OLD_IFS="$IFS"; IFS=":"
+    for t_path in $UVC_ENV_SEARCH_ROOTS; do
         ENV_PATH="$t_path/$1"
         if [ -d "$ENV_PATH" ]; then
             _do_activate "$ENV_PATH" "$1"
+            IFS="$OLD_IFS"
             return
         fi
     done
+    IFS="$OLD_IFS"
 
     echo "Environment $1 does not exist."
 }
@@ -186,12 +203,8 @@ uvc_env_list() {
 
     # Add environments from search roots
     if [ -n "$UVC_ENV_SEARCH_ROOTS" ]; then
-        OLD_IFS="$IFS"
-        IFS=":"
-        set -- $UVC_ENV_SEARCH_ROOTS
-        IFS="$OLD_IFS"
-
-        for t_path in "$@"; do
+        OLD_IFS="$IFS"; IFS=":"
+        for t_path in $UVC_ENV_SEARCH_ROOTS; do
             [ -z "$t_path" ] && continue
             if [ -d "$t_path" ]; then
                 for env_dir in "$t_path"/*; do
@@ -208,16 +221,13 @@ uvc_env_list() {
                 done
             fi
         done
+        IFS="$OLD_IFS"
     fi
 
     # Add linked environments
     if [ -n "$UVC_LINKED_ENV_PATHS" ]; then
-        OLD_IFS="$IFS"
-        IFS=":"
-        set -- $UVC_LINKED_ENV_PATHS
-        IFS="$OLD_IFS"
-
-        for linked_path in "$@"; do
+        OLD_IFS="$IFS"; IFS=":"
+        for linked_path in $UVC_LINKED_ENV_PATHS; do
             [ -z "$linked_path" ] && continue
             if [ -d "$linked_path" ]; then
                 t_env_name=$(basename "$linked_path")
@@ -233,6 +243,7 @@ uvc_env_list() {
                 fi
             fi
         done
+        IFS="$OLD_IFS"
     fi
 
     # Display all environments if temp file exists and has content
@@ -261,27 +272,25 @@ uvc_env_list() {
 }
 
 uvc_create() {
-
-    IFS=":" read -r paths <<< $(echo $UVC_ENV_SEARCH_ROOTS)
-    for t_path in ${paths}; do
+    # 检查是否已存在
+    OLD_IFS="$IFS"; IFS=":"
+    for t_path in $UVC_ENV_SEARCH_ROOTS; do
         ENV_PATH="$t_path/$1"
         if [ -d "$ENV_PATH" ]; then
             echo "Environment $1 already exists in $t_path."
+            IFS="$OLD_IFS"
             return
         fi
     done
+    IFS="$OLD_IFS"
 
+    # 取第一个env root
     if [ -n "$ZSH_VERSION" ]; then
-        # zsh
-        search_roots=(${(s.:.)UVC_ENV_SEARCH_ROOTS})
-        first_root="${search_roots[1]}"
+        primary_root="${UVC_ENV_SEARCH_ROOTS%%:*}"
     else
-        # bash
-        IFS=":" read -ra search_roots <<< "$UVC_ENV_SEARCH_ROOTS"
-        first_root="${search_roots[0]}"
+        primary_root="${UVC_ENV_SEARCH_ROOTS%%:*}"
     fi
-
-    ENV_PATH="$first_root/$1"
+    ENV_PATH="$primary_root/$1"
 
     if [ ! -z "$2" ]; then
         (uv init "$ENV_PATH" --python "$2" && cd "$ENV_PATH" && uv venv --python "$2")
@@ -454,4 +463,3 @@ uvc() {
 }
 
 uvc_load_config
-
